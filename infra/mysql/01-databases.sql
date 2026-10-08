@@ -1,0 +1,12 @@
+CREATE DATABASE fleet CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin;
+CREATE DATABASE identity CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin;
+CREATE DATABASE billing CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin;
+CREATE DATABASE telemetry CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin;
+CREATE USER 'fleet'@'%' IDENTIFIED BY 'fleet';
+CREATE USER 'identity'@'%' IDENTIFIED BY 'identity';
+CREATE USER 'billing'@'%' IDENTIFIED BY 'billing';
+CREATE USER 'telemetry'@'%' IDENTIFIED BY 'telemetry';
+GRANT ALL ON fleet.* TO 'fleet'@'%';
+GRANT ALL ON identity.* TO 'identity'@'%';
+GRANT ALL ON billing.* TO 'billing'@'%';
+GRANT ALL ON telemetry.* TO 'telemetry'@'%';

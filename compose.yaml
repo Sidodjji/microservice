@@ -1,0 +1,115 @@
+name: carsharing-microservices
+x-app: &app
+  restart: unless-stopped
+  healthcheck:
+    test: [CMD-SHELL, "wget -q -O /dev/null http://localhost:8080/actuator/health"]
+    interval: 5s
+    timeout: 5s
+    start_period: 30s
+    retries: 20
+  environment: &env
+    JWT_SECRET: ${JWT_SECRET:-change-this-development-secret-to-a-random-32-byte-value}
+    KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+    SERVER_FORWARD_HEADERS_STRATEGY: framework
+  depends_on:
+    mysql:
+      condition: service_healthy
+    kafka-init:
+      condition: service_completed_successfully
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: local-root-password
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./infra/mysql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: [CMD-SHELL, "mysql -uroot -p$$MYSQL_ROOT_PASSWORD -e 'SELECT 1 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME=\"telemetry\"' | grep -q 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+  kafka:
+    image: apache/kafka:4.0.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: [CMD-SHELL, "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+  kafka-init:
+    image: apache/kafka:4.0.1
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: [/opt/kafka/bin/kafka-topics.sh]
+    command: [--bootstrap-server, kafka:9092, --create, --if-not-exists, --topic, carsharing.booking-finished.v1, --partitions, '3', --replication-factor, '1']
+  fleet-service:
+    <<: *app
+    build:
+      context: .
+      args: {SERVICE: fleet-service}
+    environment:
+      <<: *env
+      DB_URL: jdbc:mysql://mysql:3306/fleet?connectionTimeZone=UTC
+      DB_USERNAME: fleet
+      DB_PASSWORD: fleet
+  identity-service:
+    <<: *app
+    build:
+      context: .
+      args: {SERVICE: identity-service}
+    environment:
+      <<: *env
+      DB_URL: jdbc:mysql://mysql:3306/identity?connectionTimeZone=UTC
+      DB_USERNAME: identity
+      DB_PASSWORD: identity
+  billing-service:
+    <<: *app
+    build:
+      context: .
+      args: {SERVICE: billing-service}
+    environment:
+      <<: *env
+      DB_URL: jdbc:mysql://mysql:3306/billing?connectionTimeZone=UTC
+      DB_USERNAME: billing
+      DB_PASSWORD: billing
+  telemetry-service:
+    <<: *app
+    build:
+      context: .
+      args: {SERVICE: telemetry-service}
+    environment:
+      <<: *env
+      DB_URL: jdbc:mysql://mysql:3306/telemetry?connectionTimeZone=UTC
+      DB_USERNAME: telemetry
+      DB_PASSWORD: telemetry
+      APP_FLEET_URL: http://fleet-service:8080
+  gateway:
+    image: nginx:1.28-alpine
+    ports: ["127.0.0.1:${HTTP_PORT:-8080}:8080"]
+    volumes:
+      - ./infra/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/openapi.json:/etc/nginx/openapi.json:ro
+    depends_on:
+      fleet-service: {condition: service_healthy}
+      identity-service: {condition: service_healthy}
+      billing-service: {condition: service_healthy}
+      telemetry-service: {condition: service_healthy}
+volumes:
+  mysql-data:
+  kafka-data:
